@@ -2,10 +2,13 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const {connectDatabaseCB} = require("./circuitBreakerDb");
 const {circuitBreakerSchema} = require("./circuitBreakerSchema");
+// const {Redis} = require('ioredis');
 
 const circuitBreakerDB = connectDatabaseCB().model("CB", circuitBreakerSchema);
 
 const app = express();
+// const redis = new Redis();
+
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({extended : true}));
 
@@ -32,6 +35,10 @@ app.patch("/updateServiceConfig", async (req, res) => {
         {serviceName: serviceName},
         {$set: {serviceHealth: newServiceHealth}}
     );
+    // const updatedHealthConfig = {
+    //     "health": newServiceHealth
+    // };
+    // await redis.publish(`${serviceName}`, JSON.stringify(updatedHealthConfig));
     res.status(200).json({
         "msg": `Updated Service Config for Service ${serviceName} with updated health as ${newServiceHealth}`
     });

@@ -1,5 +1,6 @@
 const express = require('express');
 const bodyParser = require('body-parser');
+const {Redis} = require('ioredis');
 
 const {connectDatabasePost} = require("./postDb");
 const {postSchema} = require("./postSchema");
@@ -9,6 +10,7 @@ const {connectDatabaseCB} = require("./circuitBreakerDb");
 const {circuitBreakerSchema} = require("./circuitBreakerSchema");
 const circuitBreakerDB = connectDatabaseCB().model("CB", circuitBreakerSchema);
 
+const redis = new Redis();
 const app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({extended : true}));
@@ -39,13 +41,29 @@ app.post("/createPost", async (req, res) => {
 });
 
 app.get("/getAuthorPost/:authorId", async (req, res) => {
-    const authorId = req.params.authorId;
 
-    const postDBServiceHealth = await isServiceHealthy("postDB");
+    let postDBServiceHealth;
+
+    let healthConfig = await redis.get("postService");
+    healthConfig = JSON.parse(healthConfig);
+
+    if(healthConfig) {
+        postDBServiceHealth = healthConfig.postDbServiceHealth;
+    }else {
+        postDBServiceHealth = await isServiceHealthy("postDB");
+        const newHealthConfig = {
+            "postDbServiceHealth": postDBServiceHealth,
+        };
+
+        await redis.set("postService", JSON.stringify(newHealthConfig));
+        await redis.expire('postService', 120);
+    }
+
     if(postDBServiceHealth === false) {
         return res.status(200).json({"Msg": "Unhealthy"});
     }
 
+    const authorId = req.params.authorId;
     const authorPosts = await postDB.find({authorId: authorId});
     res.status(200).json({
         "AuthorPosts": authorPosts

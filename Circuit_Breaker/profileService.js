@@ -1,5 +1,6 @@
 const express = require('express');
 const bodyParser = require('body-parser');
+const {Redis} = require('ioredis');
 
 const {connectDatabaseProfile} = require("./profileDb");
 const {profileSchema} = require("./profileSchema");
@@ -9,6 +10,7 @@ const {connectDatabaseCB} = require("./circuitBreakerDb");
 const {circuitBreakerSchema} = require("./circuitBreakerSchema");
 const circuitBreakerDB = connectDatabaseCB().model("CB", circuitBreakerSchema);
 
+const redis = new Redis();
 const app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({extended : true}));
@@ -40,13 +42,29 @@ app.post("/createProfile", async (req, res) => {
 });
 
 app.get("/getAuthorProfile/:authorId", async (req, res) => {
-    const authorId = req.params.authorId;
 
-    const profileDBServiceHealth = await isServiceHealthy("profileDB");
+    let profileDBServiceHealth;
+
+    let healthConfig = await redis.get("profileService");
+    healthConfig = JSON.parse(healthConfig);
+
+    if(healthConfig) {
+        profileDBServiceHealth = healthConfig.profileDBServiceHealth;
+    }else {
+        profileDBServiceHealth = await isServiceHealthy("profileDB");
+        const newHealthConfig = {
+            "profileDBServiceHealth": profileDBServiceHealth,
+        };
+
+        await redis.set("profileService", JSON.stringify(newHealthConfig));
+        await redis.expire('profileService', 120);
+    }
+
     if(profileDBServiceHealth === false) {
         return res.status(200).json({"Msg": "Unhealthy"});
     }
 
+    const authorId = req.params.authorId;
     const authorProfile = await profileDb.findOne({authorId: authorId});
     res.status(200).json({
         "AuthorProfile": authorProfile
