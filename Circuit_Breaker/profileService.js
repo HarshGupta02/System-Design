@@ -10,10 +10,42 @@ const {connectDatabaseCB} = require("./circuitBreakerDb");
 const {circuitBreakerSchema} = require("./circuitBreakerSchema");
 const circuitBreakerDB = connectDatabaseCB().model("CB", circuitBreakerSchema);
 
+const PROFILE_DB_CHANNEL = "profileDB";
+
 const redis = new Redis();
+const consumer = new Redis();
 const app = express();
+
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({extended : true}));
+
+let profileDBServiceHealth = "true";
+
+let newHealthConfig = {
+    "profileDbServiceHealth": profileDBServiceHealth,
+};
+
+consumer.subscribe(PROFILE_DB_CHANNEL);
+
+consumer.on('message', async (channel, message) => {
+    switch(channel) {
+
+        case PROFILE_DB_CHANNEL:
+
+            const newProfileDbServiceHealth = JSON.parse(message);
+            profileDBServiceHealth = newProfileDbServiceHealth.health;
+
+            newHealthConfig.profileDbServiceHealth = profileDBServiceHealth;
+            await redis.set("profileService", JSON.stringify(newHealthConfig));
+            await redis.expire('profileService', 120);
+
+            break;
+
+        default:
+            console.log(`Received message from unknown channel: ${channel}`);
+            break;
+    }
+});
 
 async function isServiceHealthy(serviceName) {
     const serviceObject = await circuitBreakerDB.findOne({serviceName: serviceName});
@@ -43,24 +75,21 @@ app.post("/createProfile", async (req, res) => {
 
 app.get("/getAuthorProfile/:authorId", async (req, res) => {
 
-    let profileDBServiceHealth;
-
     let healthConfig = await redis.get("profileService");
     healthConfig = JSON.parse(healthConfig);
 
     if(healthConfig) {
-        profileDBServiceHealth = healthConfig.profileDBServiceHealth;
+        profileDBServiceHealth = healthConfig.profileDbServiceHealth;
     }else {
         profileDBServiceHealth = await isServiceHealthy("profileDB");
-        const newHealthConfig = {
-            "profileDBServiceHealth": profileDBServiceHealth,
-        };
+
+        newHealthConfig.profileDbServiceHealth = profileDBServiceHealth;
 
         await redis.set("profileService", JSON.stringify(newHealthConfig));
         await redis.expire('profileService', 120);
     }
 
-    if(profileDBServiceHealth === false) {
+    if(profileDBServiceHealth === "false") {
         return res.status(200).json({"Msg": "Unhealthy"});
     }
 

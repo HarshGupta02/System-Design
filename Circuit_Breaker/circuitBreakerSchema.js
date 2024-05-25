@@ -6,7 +6,7 @@ const circuitBreakerSchema = new mongoose.Schema({
         required: [true, "Please Enter the Service Name"]
     },
     serviceHealth: {
-        type: Boolean,
+        type: String,
         required: [true, "Please Enter the Service Health"]
     },
 });

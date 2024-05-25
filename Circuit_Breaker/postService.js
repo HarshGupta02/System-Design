@@ -10,10 +10,42 @@ const {connectDatabaseCB} = require("./circuitBreakerDb");
 const {circuitBreakerSchema} = require("./circuitBreakerSchema");
 const circuitBreakerDB = connectDatabaseCB().model("CB", circuitBreakerSchema);
 
+const POST_DB_CHANNEL = "postDB";
+
 const redis = new Redis();
+const consumer = new Redis();
 const app = express();
+
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({extended : true}));
+
+let postDBServiceHealth = "true";
+
+let newHealthConfig = {
+    "postDbServiceHealth": postDBServiceHealth,
+};
+
+consumer.subscribe(POST_DB_CHANNEL);
+
+consumer.on('message', async (channel, message) => {
+    switch(channel) {
+
+        case POST_DB_CHANNEL:
+
+            const newPostDbServiceHealth = JSON.parse(message);
+            postDBServiceHealth = newPostDbServiceHealth.health;
+
+            newHealthConfig.postDbServiceHealth = postDBServiceHealth;
+            await redis.set("postService", JSON.stringify(newHealthConfig));
+            await redis.expire('postService', 120);
+
+            break;
+
+        default:
+            console.log(`Received message from unknown channel: ${channel}`);
+            break;
+    }
+});
 
 async function isServiceHealthy(serviceName) {
     const serviceObject = await circuitBreakerDB.findOne({serviceName: serviceName});
@@ -42,8 +74,6 @@ app.post("/createPost", async (req, res) => {
 
 app.get("/getAuthorPost/:authorId", async (req, res) => {
 
-    let postDBServiceHealth;
-
     let healthConfig = await redis.get("postService");
     healthConfig = JSON.parse(healthConfig);
 
@@ -51,15 +81,14 @@ app.get("/getAuthorPost/:authorId", async (req, res) => {
         postDBServiceHealth = healthConfig.postDbServiceHealth;
     }else {
         postDBServiceHealth = await isServiceHealthy("postDB");
-        const newHealthConfig = {
-            "postDbServiceHealth": postDBServiceHealth,
-        };
+        
+        newHealthConfig.postDbServiceHealth = postDBServiceHealth;
 
         await redis.set("postService", JSON.stringify(newHealthConfig));
         await redis.expire('postService', 120);
     }
 
-    if(postDBServiceHealth === false) {
+    if(postDBServiceHealth === "false") {
         return res.status(200).json({"Msg": "Unhealthy"});
     }
 
